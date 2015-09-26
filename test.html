@@ -5,54 +5,260 @@
 	<script>
 	function useTypeScript() {
 		
-		var LanguageServiceHost = (function () {
-	        function LanguageServiceHost(compilationSettings, fileFilter, fileInfos) {
-	            this.compilationSettings = compilationSettings;
-	            this.fileFilter = fileFilter;
-	            this.fileInfos = fileInfos;
-	        }
-	        LanguageServiceHost.prototype.getCompilationSettings = function () {
-	            return this.compilationSettings;
-	        };
-	        LanguageServiceHost.prototype.getCurrentDirectory = function () {
-	            return "";
-	        };
-	        LanguageServiceHost.prototype.getDefaultLibFileName = function (options) {
-	            return ts.getDefaultLibFileName(options);
-	        };
-	        LanguageServiceHost.prototype.getNewLine = function () {
-	            return EOL;
-	        };
-	        LanguageServiceHost.prototype.getScriptFileNames = function () {
-	            return Object.getOwnPropertyNames(this.fileInfos).filter(this.fileFilter);
-	        };
-	        LanguageServiceHost.prototype.getScriptSnapshot = function (fileName) {
-	            var fileInfo = this.fileInfos[fileName];
-	            if (fileInfo == null) {
-	                return undefined;
-	            }
-	            return fileInfo.getSnapshot();
-	        };
-	        LanguageServiceHost.prototype.getScriptVersion = function (fileName) {
-	            return this.fileInfos[fileName].getVersion();
-	        };
-	        return LanguageServiceHost;
-	    })();
+		// see https://github.com/clausreinke/typescript-tools/blob/master/bin/harness.js
+		var harness={};
+	
+		var ScriptInfo = (function () {
+		    function ScriptInfo(fileName, content, isOpen) {
+		        if (isOpen === void 0) { isOpen = true; }
+		        this.fileName = fileName;
+		        this.content = content;
+		        this.isOpen = isOpen;
+		        this.version = 1;
+		        this.editRanges = [];
+		        this.setContent(content);
+		    }
+		    ScriptInfo.prototype.setContent = function (content) {
+		        this.content = content;
+		    };
+		    ScriptInfo.prototype.updateContent = function (content) {
+		        var old_length = this.content.length;
+		        this.setContent(content);
+		        this.editRanges.push({
+		            length: content.length,
+		            textChangeRange: 
+		            // NOTE: no shortcut for "update everything" (null only works in some places, #10)
+		            ts.createTextChangeRange(ts.createTextSpan(0, old_length), content.length)
+		        });
+		        this.version++;
+		    };
+		    ScriptInfo.prototype.editContent = function (minChar, limChar, newText) {
+		        // Apply edits
+		        var prefix = this.content.substring(0, minChar);
+		        var middle = newText;
+		        var suffix = this.content.substring(limChar);
+		        this.setContent(prefix + middle + suffix);
+		        // Store edit range + new length of script
+		        this.editRanges.push({
+		            length: this.content.length,
+		            textChangeRange: ts.createTextChangeRange(ts.createTextSpanFromBounds(minChar, limChar), newText.length)
+		        });
+		        // Update version #
+		        this.version++;
+		    };
+		    ScriptInfo.prototype.getTextChangeRangeBetweenVersions = function (startVersion, endVersion) {
+		        if (startVersion === endVersion) {
+		            // No edits!
+		            return ts.unchangedTextChangeRange;
+		        }
+		        var initialEditRangeIndex = this.editRanges.length - (this.version - startVersion);
+		        var lastEditRangeIndex = this.editRanges.length - (this.version - endVersion);
+		        var entries = this.editRanges.slice(initialEditRangeIndex, lastEditRangeIndex);
+		        return ts.collapseTextChangeRangesAcrossMultipleVersions(entries.map(function (e) { return e.textChangeRange; }));
+		    };
+		    return ScriptInfo;
+		})();
+		harness.ScriptInfo = ScriptInfo;
 		
-		var fileName = "test.js";
-		var compilationSettings = {};
-        var singleFileFilter = function (fileName2) {
-            return fileName2 === fileName;
-        };
-        var fileInfos = {"test.js": {}};
+		var ScriptSnapshot = (function () {
+		    function ScriptSnapshot(scriptInfo) {
+		        this.scriptInfo = scriptInfo;
+		        this.lineMap = null;
+		        this.textSnapshot = scriptInfo.content;
+		        this.version = scriptInfo.version;
+		    }
+		    ScriptSnapshot.prototype.getText = function (start, end) {
+		        return this.textSnapshot.substring(start, end);
+		    };
+		    ScriptSnapshot.prototype.getLength = function () {
+		        return this.textSnapshot.length;
+		    };
+		    ScriptSnapshot.prototype.getLineStartPositions = function () {
+		        if (this.lineMap === null) {
+		            this.lineMap = computeLineStarts(this.textSnapshot);
+		        }
+		        return this.lineMap;
+		    };
+		    ScriptSnapshot.prototype.getChangeRange = function (oldSnapshot) {
+		        return undefined;
+		    };
+		    return ScriptSnapshot;
+		})();
+		harness.ScriptSnapshot = ScriptSnapshot;
 		
-        var ls = ts.createLanguageService(new LanguageServiceHost(compilationSettings, singleFileFilter, fileInfos));
+		var FileCache = (function () {
+		    function FileCache() {
+		        this.fileNames = [];
+		        this.snapshots = {};
+		        this.fileNameToScript = {};
+		    }
+		    FileCache.prototype.getFileNames = function () { return this.fileNames; };
+		    /**
+		     * @param fileName resolved name of possibly cached file
+		     */
+		    FileCache.prototype.getScriptInfo = function (fileName) {
+		        if (!this.fileNameToScript[fileName]) {
+		            this.fetchFile(fileName);
+		        }
+		        return this.fileNameToScript[fileName];
+		    };
+		    /**
+		     * @param fileName resolved name of possibly cached file
+		     */
+		    FileCache.prototype.getScriptSnapshot = function (fileName) {
+		        // console.log("getScriptSnapshot",fileName);
+		        if (!this.snapshots[fileName]) {
+		            this.fetchFile(fileName);
+		        }
+		        return this.snapshots[fileName];
+		    };
+		    /**
+		     * @param fileName resolved file name
+		     * @param text file contents
+		     * @param isDefaultLib should fileName be listed first?
+		     */
+		    FileCache.prototype.addFile = function (fileName, text, isDefaultLib) {
+		        if (isDefaultLib === void 0) { isDefaultLib = false; }
+		        if (isDefaultLib) {
+		            this.fileNames.push(fileName);
+		        }
+		        else {
+		            this.fileNames.unshift(fileName);
+		        }
+		        this.fileNameToScript[fileName] = new harness.ScriptInfo(fileName, text);
+		        this.snapshots[fileName] = new harness.ScriptSnapshot(this.getScriptInfo(fileName));
+		    };
+		    /**
+		     * @param fileName resolved file name
+		     */
+		    FileCache.prototype.fetchFile = function (fileName) {
+		        // console.log("fetchFile:",fileName);
+		        if (ts.sys && ts.sys.fileExists(fileName)) {
+		            this.addFile(fileName, ts.sys.readFile(fileName));
+		        }
+		        else {
+		        }
+		    };
+		    /**
+		     * @param fileName resolved name of cached file
+		     * @param line 1 based index
+		     * @param col 1 based index
+		     */
+		    FileCache.prototype.lineColToPosition = function (fileName, line, col) {
+		        var script = this.getScriptInfo(fileName);
+		        return ts.getPositionOfLineAndCharacter(this.ls.getSourceFile(fileName), line - 1, col - 1);
+		    };
+		    /**
+		     * @param fileName resolved name of cached file
+		     * @returns {line,character} 1 based indices
+		     */
+		    FileCache.prototype.positionToLineCol = function (fileName, position) {
+		        var script = this.getScriptInfo(fileName);
+		        var lineChar = ts.getLineAndCharacterOfPosition(this.ls.getSourceFile(fileName), position);
+		        return { line: lineChar.line + 1, character: lineChar.character + 1 };
+		    };
+		    /**
+		     * @param fileName resolved name of cached file
+		     * @param line 1 based index
+		     */
+		    FileCache.prototype.getLineText = function (fileName, line) {
+		        var source = this.ls.getSourceFile(fileName);
+		        var lineStart = ts.getPositionOfLineAndCharacter(source, line - 1, 0);
+		        var lineEnd = ts.getPositionOfLineAndCharacter(source, line, 0) - 1;
+		        var lineText = source.text.substring(lineStart, lineEnd);
+		        return lineText;
+		    };
+		    /**
+		     * @param fileName resolved name of possibly cached file
+		     * @param content new file contents
+		     */
+		    FileCache.prototype.updateScript = function (fileName, content) {
+		        var script = this.getScriptInfo(fileName);
+		        if (script) {
+		            script.updateContent(content);
+		            this.snapshots[fileName] = new harness.ScriptSnapshot(script);
+		        }
+		        else {
+		            this.addFile(fileName, content);
+		        }
+		    };
+		    /**
+		     * @param fileName resolved name of cached file
+		     * @param minChar first char of edit range
+		     * @param limChar first char after edit range
+		     * @param newText new file contents
+		     */
+		    FileCache.prototype.editScript = function (fileName, minChar, limChar, newText) {
+		        var script = this.getScriptInfo(fileName);
+		        if (script) {
+		            script.editContent(minChar, limChar, newText);
+		            this.snapshots[fileName] = new harness.ScriptSnapshot(script);
+		            return;
+		        }
+		        throw new Error("No script with name '" + fileName + "'");
+		    };
+		    return FileCache;
+		})();
 		
-		var sourceText = "var a: string;"
-		var doc = ts.createSourceFile("test.js", sourceText, ts.ScriptTarget.Latest, true);
+		/** TypeScript Services Server,
+	    an interactive commandline tool
+	    for getting info on .ts projects */
+		var TSS = (function () {
+		    function TSS(prettyJSON) {
+		        if (prettyJSON === void 0) { prettyJSON = false; }
+		        this.prettyJSON = prettyJSON;
+		    }
+		    
+		    /** load file and dependencies, prepare language service for queries */
+		    TSS.prototype.setup = function (files, options) {
+		        var _this = this;
+		        this.fileCache = new FileCache();		
+			    this.lsHost = {
+		            getCompilationSettings: function () { return _this.compilerOptions; },
+		            getScriptFileNames: function () { return _this.fileCache.getFileNames(); },
+		            getScriptVersion: function (fileName) { return _this.fileCache.getScriptInfo(fileName).version.toString(); },
+		            getScriptIsOpen: function (fileName) { return _this.fileCache.getScriptInfo(fileName).isOpen; },
+		            getScriptSnapshot: function (fileName) { return _this.fileCache.getScriptSnapshot(fileName); },
+		            getCurrentDirectory: function () {
+		            	return "/";
+		            	//return ts.sys.getCurrentDirectory(); 
+		            },
+		            getDefaultLibFileName: function (options) { return "";},//ts.getDefaultLibFileName(options); },
+		            log: function (message) { return undefined; },
+		            trace: function (message) { return undefined; },
+		            error: function (message) { return console.error(message); } // ??
+		        };
+		        this.ls = ts.createLanguageService(this.lsHost, ts.createDocumentRegistry());
+		        this.fileCache.ls = this.ls;
+		    }
+		    
+		    
+		    return TSS;
+		})();
 		
-		var c = ls.getCompletionsAtPosition("test.js", 14);
-		console.log(c);
+		var tss = new TSS();
+		tss.setup();
+		
+		var text = "var a: string;"
+		tss.fileCache.addFile("test.js", text);
+		
+		tss.ls.getCompletionsAtPosition("test.js", 4);
+		
+		
+// 		var fileName = "test.js";
+// 		var compilationSettings = {};
+//         var singleFileFilter = function (fileName2) {
+//             return fileName2 === fileName;
+//         };
+//         var fileInfos = {"test.js": {}};
+		
+//         var ls = ts.createLanguageService(new LanguageServiceHost(compilationSettings, singleFileFilter, fileInfos));
+		
+// 		var sourceText = "var a: string;"
+// 		var doc = ts.createSourceFile("test.js", sourceText, ts.ScriptTarget.Latest, true);
+		
+// 		var c = ls.getCompletionsAtPosition("test.js", 14);
+// 		console.log(c);
 	}
 	
 	</script>
