@@ -212,18 +212,26 @@
 		    /** load file and dependencies, prepare language service for queries */
 		    TSS.prototype.setup = function (files, options) {
 		        var _this = this;
-		        this.fileCache = new FileCache();		
+		        this.fileCache = new FileCache();
+		        this.compilerHost = ts.createCompilerHost(options);
+		        
+		        //if (!seenNoDefaultLib) {
+		            //var defaultLibFileName = this.compilerHost.getDefaultLibFileName(options);
+		            //var source = this.compilerHost.getSourceFile(defaultLibFileName, options.target);
+		            //this.fileCache.addFile(defaultLibFileName, source.text);
+		        //}
+		        
 			    this.lsHost = {
 		            getCompilationSettings: function () { return _this.compilerOptions; },
 		            getScriptFileNames: function () { return _this.fileCache.getFileNames(); },
 		            getScriptVersion: function (fileName) { return _this.fileCache.getScriptInfo(fileName).version.toString(); },
-		            getScriptIsOpen: function (fileName) { return _this.fileCache.getScriptInfo(fileName).isOpen; },
+		            getScriptIsOpen: function (fileName) { return true;}, //_this.fileCache.getScriptInfo(fileName).isOpen; },
 		            getScriptSnapshot: function (fileName) { return _this.fileCache.getScriptSnapshot(fileName); },
 		            getCurrentDirectory: function () {
 		            	return "/";
 		            	//return ts.sys.getCurrentDirectory(); 
 		            },
-		            getDefaultLibFileName: function (options) { return "";},//ts.getDefaultLibFileName(options); },
+		            getDefaultLibFileName: function (options) { return ts.getDefaultLibFileName(options); },
 		            log: function (message) { return undefined; },
 		            trace: function (message) { return undefined; },
 		            error: function (message) { return console.error(message); } // ??
@@ -237,13 +245,15 @@
 		})();
 		
 		var tss = new TSS();
-		tss.setup();
+		var fileNames = [];
+		var options = {};
+		tss.setup(fileNames, options);
 		
 		var text = "var a: string;"
-		tss.fileCache.addFile("test.js", text);
+		tss.fileCache.addFile("test.ts", text);
 		
-		tss.ls.getCompletionsAtPosition("test.js", 4);
-		
+		var result = tss.fileCache.ls.getCompletionsAtPosition("test.ts", 3);
+		document.getElementById("result").value = JSON.stringify(result, null, " ");
 		
 // 		var fileName = "test.js";
 // 		var compilationSettings = {};
@@ -265,6 +275,6 @@
 </head>
 <body onload="useTypeScript()" >
 
-	
+	<textarea id="result" style="width:100%; height: 100%"></textarea>
 </body>
 </html>
