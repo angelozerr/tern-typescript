@@ -1,0 +1,22 @@
+{
+  "name": "tern-typescript",
+  "license": "MIT",
+  "version": "0.1.0",
+  "main": "typescript.js",
+  "author": "Angelo ZERR <angelo.zerr@gmail.com>",
+  "description": "A Tern plugin adding TypeScript.",
+  "repository": {
+    "type": "git",
+    "url": "git://github.com/angelozerr/tern-typescript.git"
+  },
+  "scripts": {
+    "test": "node ./test/all.js"
+  },
+  "dependencies": {
+    "typescript": "^1.6.2"
+  },
+  "keywords": [
+    "tern",
+    "typescript"
+  ]
+}
