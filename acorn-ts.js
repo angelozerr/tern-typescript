@@ -1,7 +1,24 @@
-var acornTS = function(acorn) {
+var acornTS = function(acorn, loose) {
   var tt = acorn.tokTypes;
   var tc = acorn.tokContexts;
-  var pp = acorn.Parser.prototype;
+  var pp = loose ? acorn.LooseParser.prototype : acorn.Parser.prototype;
+  
+  if (loose) {
+    pp.extend = function extend(name, f) {
+      this[name] = f(this[name]);
+    };
+    
+    pp.extend("parseIdent", function (inner) {
+      return function (decl) {
+        var id = inner.call(this, decl);
+        if (this.eat(tt.colon)) {
+          id.typeAnnotation = this.flowParseTypeAnnotation();
+          this.finishNode(id, id.type);
+        }
+        return id;
+      };
+    });
+  }
   
   // Type annotations
 
@@ -51,13 +68,13 @@ var acornTS = function(acorn) {
   //primary types are kind of like primary expressions...they're the
   //primitives with which other types are constructed.
   pp.flowParsePrimaryType = function () {
-   var startPos = this.start, startLoc = this.startLoc;
+   var startPos = this.start  || this.tok.start, startLoc = this.startLoc;
    var node = this.startNode();
    var tmp;
    var type;
    var isGroupedType = false;
-  
-   switch (this.type) {
+   var nodeType = this.type || this.tok.type;
+   switch (nodeType) {
      case tt.name:
        return this.flowIdentToTypeAnnotation(startPos, startLoc, node, this.parseIdent());
   
@@ -246,7 +263,7 @@ var acornTS = function(acorn) {
         }
       };
     });
-    
+
   }
   
   return acorn;

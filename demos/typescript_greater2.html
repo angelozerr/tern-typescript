@@ -62,8 +62,25 @@
     
     <h1>Demo with TypeScript Tern plugin </h1>
 	<p>See <a href="https://github.com/angelozerr/tern-typescript">https://github.com/angelozerr/tern-typescript</a> for more infos.</p>  
-    <form><textarea id="code" name="code">var isDone: boolean;
-// http://learnxinyminutes.com/docs/typescript/    
+    <form><textarea id="code" name="code">class Greeter {
+	greeting: string;
+	constructor (message: string) {
+		this.greeting = message;
+	}
+	greet() {
+		return "Hello, " + this.greeting;
+	}
+}   
+
+var greeter = new Greeter("world");
+
+var button = document.createElement('button')
+button.innerText = "Say Hello"
+button.onclick = function() {
+	alert(greeter.greet())
+}
+
+document.body.appendChild(button)    
 </textarea></form>
     <script type="text/javascript">
        

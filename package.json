@@ -10,6 +10,7 @@
     "url": "git://github.com/angelozerr/tern-typescript.git"
   },
   "scripts": {
+    "publish": "node ./scripts/git-tag.js",
     "test": "node ./test/all.js"
   },
   "dependencies": {
@@ -24,6 +25,6 @@
   },
   "keywords": [
     "tern",
-    "typescript"
+    "TypeScript"
   ]
 }
