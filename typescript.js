@@ -7,15 +7,41 @@
 })(function(infer, tern, acorn, walk, acornTS) {
   "use strict";
   
+  var WG_MADEUP = 101;
+  
   tern.registerPlugin("typescript", function(server, options) {
     acornTS(acorn);
     server.on("preParse", preParse);
+    server.on("postInfer", postInfer);
   });
   
   function preParse(text, options) {
     var plugins = options.plugins;
     if (!plugins) plugins = options.plugins = {};   
     plugins["ts"] = true;
-  }  
-
+  }
+  
+  function postInfer(ast, scope) {
+    walk.simple(ast, {
+      VariableDeclaration: function(node, scope) {
+        for (var i = 0; i < node.declarations.length; ++i) {
+          var decl = node.declarations[i];
+          if (decl.id.typeAnnotation) {
+            var type;
+            var aval = scope.getProp(decl.id.name);
+            var ann = decl.id.typeAnnotation.typeAnnotation;
+            switch(ann.type) {
+              case "BooleanTypeAnnotation":
+                type = infer.cx().bool;
+                break;
+            }
+            if (type) type.propagate(aval, WG_MADEUP);
+          }
+        }
+        //if (node.commentsBefore)
+        //  interpretComments(node, node.commentsBefore, scope,
+        //                    scope.getProp(node.declarations[0].id.name));
+      }
+    }, infer.searchVisitor, scope);
+  }
 })  
